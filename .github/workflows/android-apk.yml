@@ -1,0 +1,74 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_url:
+        description: "Live CRM URL (defaults to the SITE_URL repository variable)"
+        required: false
+  push:
+    branches: [release, main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/android-apk.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      SITE_URL: ${{ inputs.site_url || vars.SITE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor
+        run: npm install --no-audit --no-fund
+
+      - name: Point the app at the live site
+        run: node configure.mjs
+
+      - name: Generate Android project
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Build APK
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/crm.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crm-apk
+          path: crm.apk
+
+      - name: Publish to the apk-latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: CRM Android APK (latest)
+          body: "Debug-signed APK that opens ${{ env.SITE_URL }}. Built from ${{ github.sha }}."
+          files: crm.apk
+          make_latest: true
